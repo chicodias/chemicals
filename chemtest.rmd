@@ -1,0 +1,297 @@
+---
+title: "Chemicals"
+output: html_document
+---
+##Entrada dos dados
+
+Como entrada iremos utilizar as transações realizadas no período, utilizando o tidyverde para coletar e separar os dados.
+Exclui as colunas Numero e Data da NFe pois irei considerar somente a data em que a operação foi realizada.
+
+```{r echo=FALSE, warnings=FALSE}
+  library(dplyr)
+
+  data <- readxl::read_excel(path = "entradas.xlsx",col_names=FALSE)
+  compras <- data  %>% select(X0:X2,X4:X8)
+  colnames(compras) <- c("CodigoComp","DataComp","Fornecedor","Produto","QuantComp","TotalComp","UnComp","Lote")
+  
+  data <- readxl::read_excel(path = "saidas.xlsx",col_names=FALSE)
+  vendas <- data  %>% select(X2,X4:X11)
+  colnames(vendas) <- c("DataVend","Cliente","Produto","QuantVend","UnVend","TotalVend","Lote","Deposito","CodigoVend")
+  
+  
+  ##iremos simplificar o modelo e descartar as transações que não possuam lote (não são muitas) para facilitar a analise.
+  compras <- compras  %>% filter(Lote>0, Lote !='Lote')
+  vendas <- vendas  %>% filter(Lote>0, Lote !='Lote')
+  vendas <- vendas  %>% filter(CodigoVend>0)
+  
+  ##corrigindo o tipo das variaveis
+  
+  compras$CodigoComp <- as.numeric(compras$CodigoComp)
+  compras$QuantComp <- as.numeric(compras$QuantComp)
+  compras$UnComp <- as.numeric(compras$UnComp)
+  compras$TotalComp <- as.numeric(compras$TotalComp)
+  vendas$CodigoVend <- as.numeric(vendas$CodigoVend)
+  vendas$QuantVend <- as.numeric(vendas$QuantVend)
+  vendas$UnVend <- as.numeric(vendas$UnVend)
+  vendas$TotalVend <- as.numeric(vendas$TotalVend)
+  
+  #corrigindo as datas
+  library(lubridate)
+  
+  compras$DataComp <- compras$DataComp %>% dmy
+  vendas$DataVend <- vendas$DataVend %>% dmy
+  
+  
+  
+  
+  
+```
+
+##Output Inicial dos dados coletados
+O gráfico abaixo ilustra todas as transações de compra e venda ao longo do tempo, sendo o tamanho de cada bolinha o volume da transação para cada cor(cliente).
+
+```{r}
+  library("ggplot2")
+
+  compras %>% ggplot(aes(DataComp,Produto)) + geom_point(mapping = aes(color = as.factor(Fornecedor), size = QuantComp)) 
+  
+  vendas %>% ggplot(aes(DataVend,Produto)) + geom_point(mapping = aes(color = as.factor(Cliente), size = QuantVend)) + theme(legend.position="none")
+  
+```
+
+
+##Agrupando dados
+
+Iremos juntar as transações de compra e venda relacionando-as
+Queremos descobrir quais variaveis mais interferem na rentabilidade através dos dados coletados
+
+###Ranking de Produtos
+
+```{r}
+
+transactions <- inner_join(compras,vendas,by="Lote")
+
+transactions <- transactions  %>% mutate(margemUn = UnVend - UnComp)
+transactions <- transactions  %>% mutate(margemTotal = margemUn * QuantVend)
+transactions <- transactions %>% mutate(margemPC = UnVend/UnComp - 1)
+tudo <- transactions
+transactions <- transactions %>% filter(DataVend %>% month == 9)
+
+##valor de venda total cada produto
+LucroTot <- numeric()
+nOperVend <- numeric()
+nOperComp <- numeric()
+sdLitroComp <- numeric()
+sdLitroVend <- numeric()
+mLitroVend <- numeric()
+mLitroComp <- numeric()
+quant <- numeric()
+
+meses <- transactions$DataVend %>% month %>% unique %>% sort
+
+produtos <- transactions$Produto.y %>% unique
+
+for (i in 1: length(produtos)){
+  
+  LucroTot[i] <- transactions  %>% select(margemTotal)  %>%  filter(transactions$Produto.y == produtos[i]) %>% sum
+  quant[i] <- transactions  %>% select(QuantVend)  %>%  filter(transactions$Produto.y == produtos[i]) %>% sum
+  nOperVend[i] <-  transactions  %>% filter(transactions$Produto.y == produtos[i]) %>% nrow
+  nOperComp[i] <-  transactions  %>% select(CodigoComp) %>% filter(transactions$Produto.y == produtos[i]) %>% unique %>% nrow
+  
+  tmp <- transactions %>% select(UnVend) %>%  filter(transactions$Produto.y == produtos[i])
+  mLitroVend[i] <- mean(tmp$UnVend)
+  sdLitroVend[i] <- sd(tmp$UnVend)
+
+  tmp1 <- transactions %>% select(UnComp) %>%  filter(transactions$Produto.x == produtos[i])
+  mLitroComp[i] <- mean(tmp1$UnComp) 
+  sdLitroComp[i] <- sd(tmp1$UnComp)
+  
+  }
+
+RentMed <- mLitroVend / mLitroComp - 1
+somProdutos <- tibble(produtos, LucroTot, quant, nOperComp, mLitroComp, sdLitroComp, nOperVend, mLitroVend, sdLitroVend, RentMed)
+
+LucroTot <- numeric()
+quant <- numeric()
+nOperVend <- numeric()
+nOperComp <- numeric()
+sdLitroComp <- numeric()
+sdLitroVend <- numeric()
+mLitroVend <- numeric()
+mLitroComp <- numeric()
+RentMed <- numeric()
+
+#Ranking de Fornecedores
+
+fornecedores <- transactions$Fornecedor %>% unique
+
+for (i in 1: length(fornecedores)){
+
+  LucroTot[i] <- transactions  %>% select(margemTotal)  %>%  filter(transactions$Fornecedor == fornecedores[i]) %>% sum
+  quant[i] <- transactions  %>% select(QuantVend)  %>%  filter(transactions$Fornecedor == fornecedores[i]) %>% sum
+ 
+  tmp <- transactions %>% select(UnVend) %>%  filter(transactions$Fornecedor == fornecedores[i])
+  mLitroVend[i] <- mean(tmp$UnVend)
+  sdLitroVend[i] <- sd(tmp$UnVend)
+
+  tmp1 <- transactions %>% select(UnComp) %>%  filter(transactions$Fornecedor == fornecedores[i])
+  mLitroComp[i] <- mean(tmp1$UnComp) 
+  sdLitroComp[i] <- sd(tmp1$UnComp)
+  
+  nOperVend[i] <-  transactions  %>% filter(transactions$Fornecedor == fornecedores[i]) %>% nrow
+  nOperComp[i] <-  transactions  %>% select(CodigoComp) %>% filter(transactions$Fornecedor == fornecedores[i]) %>% unique %>% nrow
+  
+  
+  }
+
+RentMed <- mLitroVend / mLitroComp - 1
+somFornecedor <- tibble(fornecedores, LucroTot, quant, nOperComp, mLitroComp, sdLitroComp, nOperVend, mLitroVend, sdLitroVend, RentMed)
+
+
+LucroTot <- numeric()
+quant <- numeric()
+nOperVend <- numeric()
+nOperComp <- numeric()
+sdLitroComp <- numeric()
+sdLitroVend <- numeric()
+mLitroVend <- numeric()
+mLitroComp <- numeric()
+RentMed <- numeric()
+
+clientes <- transactions$Cliente %>% unique
+
+for (i in 1: length(clientes)){
+  
+  LucroTot[i] <- transactions  %>% select(margemTotal)  %>%  filter(transactions$Cliente == clientes[i]) %>% sum
+ 
+  quant[i] <- transactions  %>% select(QuantVend)  %>%  filter(transactions$Cliente == clientes[i]) %>% sum
+ 
+  tmp <- transactions %>% select(UnVend) %>%  filter(transactions$Cliente == clientes[i])
+  mLitroVend[i] <- mean(tmp$UnVend)
+  sdLitroVend[i] <- sd(tmp$UnVend)
+ 
+  tmp1 <- transactions %>% select(UnComp) %>%  filter(transactions$Cliente == clientes[i])
+  mLitroComp[i] <- mean(tmp1$UnComp) 
+  sdLitroComp[i] <- sd(tmp1$UnComp) 
+  
+    nOperVend[i] <-  transactions  %>% filter(transactions$Cliente == clientes[i]) %>% nrow
+  nOperComp[i] <-  transactions  %>% select(CodigoComp) %>% filter(transactions$Cliente == clientes[i]) %>% unique %>% nrow
+  
+
+}
+
+RentMed <- mLitroVend / mLitroComp - 1
+somCliente <- tibble(clientes, LucroTot, quant, nOperComp, mLitroComp, sdLitroComp, nOperVend, mLitroVend, sdLitroVend, RentMed)
+ 
+```
+
+```{r}
+#rentabilidade mensal
+tudo <- tudo %>% filter(tudo$DataVend %>% month != 12)
+meses <- tudo$DataVend %>% month %>% unique %>% sort
+RentMens <- numeric()
+variacao <- numeric()
+
+
+for(i in 1:length(meses))
+  RentMens[i] <- tudo %>% select(margemTotal) %>% filter(month(tudo$DataVend)==meses[i]) %>% sum
+
+
+for (i in 2:length(meses))
+  variacao[i] <- (RentMens[i] - RentMens[i-1])/RentMens[i-1]*100
+
+variacao <- round(variacao, digits = 1)
+
+RentMens <- as.data.frame(RentMens,variacao)
+mes <- c("Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set")
+ggplot(RentMens, aes(x=meses,y=RentMens)) + geom_bar(stat="identity") + geom_text(aes(label=variacao), vjust=-0.2) + geom_line(aes(color=variacao)) + geom_text(aes(label=RentMens), vjust=2) +     scale_x_continuous(breaks=c(1,2,3,4,5,6,7,8,9),labels=mes) + xlab("Meses") + ylab("Lucro")
+
+```
+
+
+```{r}
+
+##valor de venda total cada produto
+LucroTot <- numeric()
+mLitroComp <- numeric()
+mLitroVend <- numeric()
+quant <- numeric()
+
+meses <- transactions$DataVend %>% month %>% unique %>% sort
+
+produtos <- transactions$Produto.y %>% unique
+
+for (i in 1: length(produtos)){
+  
+  LucroTot[i] <- transactions  %>% select(margemTotal)  %>%  filter(transactions$Produto.y == produtos[i],month(transactions$DataVend)== 9) %>% sum
+  quant[i] <- transactions  %>% select(QuantVend)  %>%  filter(transactions$Produto.y == produtos[i],month(transactions$DataVend)== 9) %>% sum
+  
+  tmp <- transactions %>% select(UnVend) %>%  filter(transactions$Produto.y == produtos[i],month(transactions$DataVend)== 9)
+  mLitroVend[i] <- mean(tmp$UnVend)
+  sdLitroVend[i] <- sd(tmp$UnVend)
+
+  tmp1 <- transactions %>% select(UnComp) %>%  filter(transactions$Produto.x == produtos[i],month(transactions$DataVend)== 9)
+  mLitroComp[i] <- mean(tmp1$UnComp) 
+  sdLitroComp[i] <- sd(tmp1$UnComp)
+  
+  }
+
+RentMed <- mLitroVend / mLitroComp - 1
+somProdutos <- tibble(produtos, quant, LucroTot, mLitroVend, RentMed)
+
+```
+
+
+
+## Agrupamento 2: Clientes x Quantia de Cada Produto
+```{r}
+
+sells <- matrix(0,length(clientes),length(produtos))
+
+row.names(sells) <- clientes
+colnames(sells) <- produtos
+
+
+for(i in 1:length(clientes)){
+  for (j in 1:length(produtos)){
+    tmp <- transactions %>% select(QuantVend) %>%  filter(transactions$Produto.y == produtos[j],transactions$Cliente == clientes[i])
+    if(nrow(tmp) > 0)
+      sells[i,j] <- tmp$QuantVend %>% sum
+    }
+}
+
+#fav <- character(fav <- character(length(clientes)))
+
+
+  
+
+#fav[i] <- transactions %>% select(Produto.y) %>% filter(transactions$Cliente == clientes[i]) %>% sort(,decreasing=TRUE)
+
+```
+
+
+##Alguns Plots
+
+```{r}
+somCliente %>% arrange(desc(LucroTot)) %>% ggplot(aes(x=clientes, y=LucroTot)) + geom_bar(stat="identity") + coord_flip()
+
+ggplot(somProdutos, aes(x="", y=LucroTot, fill=produtos))+
+geom_bar(width = 1, stat = "identity") + coord_polar("y", start=0)
+
+ggplot(somProdutos, aes(x="", y=RentMed, fill=produtos))+
+geom_bar(width = 1, stat = "identity") + coord_polar("y", start=0)
+
+  ggplot(somProdutos, aes(x=produtos, y=LucroTot)) +
+  geom_bar(stat="identity") + coord_flip() stat_summary(fun.data=LucroTot)
+  
+#Lucro vs Quantidade Comprada
+ggplot(somFornecedor, aes(x="", y=LucroTot, fill=fornecedores))+
+geom_bar(width = 1, stat = "identity") + coord_polar("y", start=0)
+
+ggplot(somFornecedor, aes(x="", y=quant, fill=fornecedores))+
+geom_bar(width = 1, stat = "identity") + coord_polar("y", start=0)
+  transactions %>% ggplot(aes(as.integer(Lote),Cliente)) + geom_point(mapping = aes(color = as.factor(Produto.x), size = as.factor(margemUn))) + theme(legend.position="none")
+
+
+```
+<!-- usar para esconder a legenda + theme(legend.position="none")  -->
